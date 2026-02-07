@@ -6,9 +6,6 @@
     <title>Dashboard - GameTest Pro</title>
     <link rel="stylesheet" href="styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
     <nav class="navbar navbar-dashboard">
@@ -41,12 +38,12 @@
                     <span id="devActiveJobs" class="stat-value">0</span>
                 </div>
                 <div class="stat-card">
-                    <h3>Total Applications</h3>
-                    <span id="devApplications" class="stat-value">0</span>
+                    <h3>Total Jobs</h3>
+                    <span id="devTotalJobs" class="stat-value">0</span>
                 </div>
                 <div class="stat-card">
-                    <h3>Testers Hired</h3>
-                    <span id="devHired" class="stat-value">0</span>
+                    <h3>Applications</h3>
+                    <span id="devApplications" class="stat-value">0</span>
                 </div>
             </div>
 
@@ -82,7 +79,7 @@
             <div class="section">
                 <h2>Available Jobs</h2>
                 <div id="availableJobsList" class="jobs-list">
-                    <p class="empty-state">No jobs available right now. Check back later!</p>
+                    <p class="empty-state">No jobs available right now.</p>
                 </div>
             </div>
 
@@ -127,52 +124,46 @@
                 </div>
                 <div class="form-group">
                     <label>Requirements</label>
-                    <textarea id="jobRequirements" rows="3" placeholder="e.g., PC with RTX 3060, 100+ hours in similar games..."></textarea>
+                    <textarea id="jobRequirements" rows="3" placeholder="e.g., PC with RTX 3060..."></textarea>
                 </div>
                 <button type="submit" class="btn btn-primary btn-full">Post Job</button>
             </form>
         </div>
     </div>
 
-    <script src="firebase-config.js"></script>
+    <script src="api-config.js"></script>
     <script>
-        let currentUser = null;
-        let userRole = null;
+        // Check if logged in
+        if (!currentUser) {
+            window.location.href = 'login.html';
+        }
 
         // Load user data
-        auth.onAuthStateChanged(async (user) => {
-            if (!user) {
-                window.location.href = 'login.html';
-                return;
-            }
-            currentUser = user;
-            
-            const userDoc = await db.collection('users').doc(user.uid).get();
-            if (userDoc.exists) {
-                const userData = userDoc.data();
-                userRole = userData.role;
-                document.getElementById('userName').textContent = userData.fullName || user.email;
-                document.getElementById('userRole').textContent = userRole === 'developer' ? 'Developer' : 'Tester';
-                
-                if (userRole === 'developer') {
-                    document.getElementById('developerView').style.display = 'block';
-                    loadDeveloperData();
-                } else {
-                    document.getElementById('testerView').style.display = 'block';
-                    loadTesterData();
-                }
-            }
-        });
+        document.getElementById('userName').textContent = currentUser.fullName;
+        document.getElementById('userRole').textContent = currentUser.role === 'developer' ? 'Developer' : 'Tester';
+
+        // Show correct view
+        if (currentUser.role === 'developer') {
+            document.getElementById('developerView').style.display = 'block';
+            loadDeveloperData();
+        } else {
+            document.getElementById('testerView').style.display = 'block';
+            loadTesterData();
+        }
 
         // Logout
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            auth.signOut().then(() => {
-                window.location.href = 'login.html';
-            });
-        });
+        document.getElementById('logoutBtn').addEventListener('click', logout);
 
-        // Developer: Create job
-        document.getElementById('createJobForm').addEventListener('submit', async (e) => {
+        // Developer functions
+        function showCreateJobModal() {
+            document.getElementById('createJobModal').style.display = 'flex';
+        }
+
+        function hideCreateJobModal() {
+            document.getElementById('createJobModal').style.display = 'none';
+        }
+
+        document.getElementById('createJobForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
             const jobData = {
@@ -182,131 +173,105 @@
                 pay: parseInt(document.getElementById('jobPay').value),
                 duration: parseInt(document.getElementById('jobDuration').value),
                 requirements: document.getElementById('jobRequirements').value,
-                postedBy: currentUser.uid,
-                postedByName: document.getElementById('userName').textContent,
-                status: 'open',
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                postedBy: currentUser.email,
+                postedByName: currentUser.fullName,
+                status: 'open'
             };
 
-            try {
-                await db.collection('jobs').add(jobData);
-                hideCreateJobModal();
-                document.getElementById('createJobForm').reset();
-                loadDeveloperData();
-            } catch (error) {
-                alert('Error posting job: ' + error.message);
-            }
+            DB.saveJob(jobData);
+            hideCreateJobModal();
+            document.getElementById('createJobForm').reset();
+            loadDeveloperData();
         });
 
-        function showCreateJobModal() {
-            document.getElementById('createJobModal').style.display = 'flex';
-        }
-
-        function hideCreateJobModal() {
-            document.getElementById('createJobModal').style.display = 'none';
-        }
-
-        // Load developer jobs
-        async function loadDeveloperData() {
-            const jobsSnapshot = await db.collection('jobs')
-                .where('postedBy', '==', currentUser.uid)
-                .orderBy('createdAt', 'desc')
-                .get();
+        function loadDeveloperData() {
+            const allJobs = DB.getJobs();
+            const myJobs = allJobs.filter(j => j.postedBy === currentUser.email);
+            const activeJobs = myJobs.filter(j => j.status === 'open');
+            
+            document.getElementById('devActiveJobs').textContent = activeJobs.length;
+            document.getElementById('devTotalJobs').textContent = myJobs.length;
+            
+            const myApps = DB.getApplications().filter(a => myJobs.some(j => j.id === a.jobId));
+            document.getElementById('devApplications').textContent = myApps.length;
 
             const jobsList = document.getElementById('myJobsList');
-            jobsList.innerHTML = '';
-
-            let activeCount = 0;
-            jobsSnapshot.forEach(doc => {
-                const job = doc.data();
-                if (job.status === 'open') activeCount++;
-                
-                const jobCard = document.createElement('div');
-                jobCard.className = 'job-card';
-                jobCard.innerHTML = `
-                    <div class="job-header">
-                        <h3>${job.title}</h3>
-                        <span class="status-badge ${job.status}">${job.status}</span>
+            if (myJobs.length > 0) {
+                jobsList.innerHTML = myJobs.map(job => `
+                    <div class="job-card">
+                        <div class="job-header">
+                            <h3>${job.title}</h3>
+                            <span class="status-badge ${job.status}">${job.status}</span>
+                        </div>
+                        <p class="job-game">${job.gameName}</p>
+                        <p class="job-desc">${job.description}</p>
+                        <div class="job-meta">
+                            <span>$${job.pay} - ${job.duration} hours</span>
+                        </div>
                     </div>
-                    <p class="job-game">${job.gameName}</p>
-                    <p class="job-desc">${job.description}</p>
-                    <div class="job-meta">
-                        <span>$${job.pay} - ${job.duration} hours</span>
-                        <span>Posted: ${job.createdAt?.toDate().toLocaleDateString() || 'Just now'}</span>
-                    </div>
-                `;
-                jobsList.appendChild(jobCard);
-            });
-
-            document.getElementById('devActiveJobs').textContent = activeCount;
+                `).join('');
+            }
         }
 
-        // Load tester jobs
-        async function loadTesterData() {
-            // Available jobs
-            const jobsSnapshot = await db.collection('jobs')
-                .where('status', '==', 'open')
-                .orderBy('createdAt', 'desc')
-                .get();
+        function loadTesterData() {
+            const allJobs = DB.getJobs().filter(j => j.status === 'open');
+            document.getElementById('availableJobs').textContent = allJobs.length;
+            
+            const myApps = DB.getApplications().filter(a => a.testerId === currentUser.email);
+            document.getElementById('myApplications').textContent = myApps.length;
 
             const jobsList = document.getElementById('availableJobsList');
-            jobsList.innerHTML = '';
-            document.getElementById('availableJobs').textContent = jobsSnapshot.size;
-
-            if (jobsSnapshot.empty) {
-                jobsList.innerHTML = '<p class="empty-state">No jobs available right now.</p>';
-            } else {
-                jobsSnapshot.forEach(doc => {
-                    const job = doc.data();
-                    const jobCard = document.createElement('div');
-                    jobCard.className = 'job-card';
-                    jobCard.innerHTML = `
+            if (allJobs.length > 0) {
+                jobsList.innerHTML = allJobs.map(job => `
+                    <div class="job-card">
                         <div class="job-header">
                             <h3>${job.title}</h3>
                             <span class="pay-badge">$${job.pay}</span>
                         </div>
                         <p class="job-game">${job.gameName} - by ${job.postedByName}</p>
                         <p class="job-desc">${job.description}</p>
-                        ${job.requirements ? `<p class="job-reqs"><strong>Requirements:</strong> ${job.requirements}</p>` : ''}
                         <div class="job-meta">
                             <span>${job.duration} hours</span>
-                            <button class="btn btn-primary" onclick="applyToJob('${doc.id}')">Apply Now</button>
+                            <button class="btn btn-primary" onclick="applyToJob('${job.id}')">Apply Now</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            const appsList = document.getElementById('myApplicationsList');
+            if (myApps.length > 0) {
+                appsList.innerHTML = myApps.map(app => {
+                    const job = DB.getJobs().find(j => j.id === app.jobId);
+                    return `
+                        <div class="job-card">
+                            <h3>${job?.title || 'Unknown Job'}</h3>
+                            <span class="status-badge ${app.status}">${app.status}</span>
                         </div>
                     `;
-                    jobsList.appendChild(jobCard);
-                });
+                }).join('');
             }
-
-            // My applications
-            const appsSnapshot = await db.collection('applications')
-                .where('testerId', '==', currentUser.uid)
-                .get();
-            
-            document.getElementById('myApplications').textContent = appsSnapshot.size;
         }
 
-        async function applyToJob(jobId) {
-            try {
-                await db.collection('applications').add({
-                    jobId: jobId,
-                    testerId: currentUser.uid,
-                    testerName: document.getElementById('userName').textContent,
-                    status: 'applied',
-                    appliedAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-                alert('Application submitted!');
-                loadTesterData();
-            } catch (error) {
-                alert('Error applying: ' + error.message);
+        function applyToJob(jobId) {
+            const existing = DB.getApplications().find(a => a.jobId === jobId && a.testerId === currentUser.email);
+            if (existing) {
+                alert('Already applied!');
+                return;
             }
+            
+            DB.saveApplication({
+                jobId: jobId,
+                testerId: currentUser.email,
+                testerName: currentUser.fullName
+            });
+            alert('Application submitted!');
+            loadTesterData();
         }
 
         // Close modal on outside click
         window.onclick = function(event) {
             const modal = document.getElementById('createJobModal');
-            if (event.target == modal) {
-                modal.style.display = 'none';
-            }
+            if (event.target == modal) modal.style.display = 'none';
         }
     </script>
 </body>
